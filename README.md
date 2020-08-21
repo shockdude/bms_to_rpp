@@ -1,6 +1,7 @@
 # BMS to REAPER project (RPP) converter v0.5
 Written by shockdude in Python 3.7\
-REAPER is property of Cockos Incorporated: https://www.reaper.fm/
+REAPER is property of Cockos Incorporated: https://www.reaper.fm/ \
+Uses pydub: https://github.com/jiaaro/pydub
 
 Usage: `python bms_to_rpp.py chart_file.bms [output_file.rpp]`
 
