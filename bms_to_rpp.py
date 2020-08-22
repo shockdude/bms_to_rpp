@@ -1,4 +1,4 @@
-# BMS to RPP v0.5
+# BMS to RPP v0.6
 # Copyright (C) 2020 shockdude
 # REAPER is property of Cockos Incorporated
 
@@ -23,7 +23,7 @@ import math
 from pydub import AudioSegment
 
 def usage():
-	print("BMS to RPP v0.5")
+	print("BMS to RPP v0.6")
 	print("Convert a BMS chart into a playable REAPER project")
 	print("WAV keysounds recommended, OGG keysounds require ffmpeg/avconv and are slow to parse.")
 	print("Usage: {} chart_file.bms [output_filename.rpp]".format(sys.argv[0]))
@@ -95,7 +95,7 @@ def add_keysound(line):
 	re_match = wav_re.match(line)
 	if re_match != None and re_match.start() == 0:
 		line_split = line.split(" ")
-		keysound_index = line_split[0][4:6]
+		keysound_index = line_split[0][-2:]
 		keysound_filename = line_split[1].strip()
 		if not os.path.isfile(keysound_filename):
 			keysound_filename = os.path.splitext(keysound_filename)[0] + ".ogg"
@@ -109,7 +109,7 @@ def add_bpmvalue(line):
 	re_match = bpm_re.match(line)
 	if re_match != None and re_match.start() == 0:
 		line_split = line.split(" ")
-		bpmvalue_index = line_split[0][4:6]
+		bpmvalue_index = line_split[0][-2:]
 		bpmvalue = float(line_split[1].strip())
 		extbpm_dict[bpmvalue_index] = bpmvalue
 		return True
@@ -121,7 +121,7 @@ def add_stopvalue(line):
 	re_match = bpm_re.match(line)
 	if re_match != None and re_match.start() == 0:
 		line_split = line.split(" ")
-		stopvalue_index = line_split[0][5:7]
+		stopvalue_index = line_split[0][-2:]
 		stopvalue = float(line_split[1].strip())
 		stop_dict[stopvalue_index] = stopvalue
 		return True
@@ -234,6 +234,8 @@ def measure_offset_seconds(start_measure, beatpos, bpmpos_array, stop_positions,
 				stop_bpmpos = next_bpmpos
 				stop_bpm = bpm_dict[stop_bpmpos]
 			current_time += stop_lengths[current_stop_pos] * MPS_FACTOR / stop_bpm
+		else:
+			break
 
 	# add remaining time based on last bpm marker
 	current_time += (beatpos - bpmpos) * MPS_FACTOR * measure_len / bpm
@@ -254,6 +256,10 @@ def add_keysounds_to_sample_dict(sample_dict, keysounds, keysound_lengths, curre
 			# TODO per-sample volume
 			#sample["volume"] = 1.0
 			sample_dict[keysound].append(sample)
+
+# for sorting the sample array by the sample position
+def sample_pos_sort_key(s):
+	return s["pos"]
 
 # primary keysound parsing & rpp generating function
 def parse_keysounds(chart_file, out_file):
@@ -383,7 +389,8 @@ def parse_keysounds(chart_file, out_file):
 						else: # b == 0, replaces the previous bpm for the measure. update current_bpmpos_i
 							current_bpmpos_i += 1
 						bpm_positions.append(bpm_pos)
-					bpm_dict[bpm_pos] = extbpm_dict[extbpm_indices[b]]
+					# handle negative bpm?
+					bpm_dict[bpm_pos] = abs(extbpm_dict[extbpm_indices[b]])
 		
 		# sort bpm positions
 		bpm_positions.sort()
@@ -462,8 +469,17 @@ def parse_keysounds(chart_file, out_file):
 				rpp_out.write("<TRACK\n")
 				rpp_out.write("NAME {}\n".format(keysound_name))
 				rpp_out.write("VOLPAN {} 0 -1 -1 1\n".format(1/3.0)) # 1/3 track volume
-				# add a keysound sample to the track
-				for sample in sample_dict[i]:
+				# sort samples by position
+				sample_array = sample_dict[i]
+				sample_array.sort(key=sample_pos_sort_key)
+				for s in range(len(sample_array)):
+					sample = sample_array[s]
+					# cut the lengths of overlapping samples
+					if s + 1 < len(sample_array):
+						next_sample = sample_array[s+1]
+						if sample["pos"] + sample["length"] > next_sample["pos"]:
+							sample["length"] = next_sample["pos"] - sample["pos"]
+					# add a keysound sample to the track
 					rpp_out.write("<ITEM\n")
 					rpp_out.write("POSITION {}\n".format(sample["pos"]))
 					rpp_out.write("LENGTH {}\n".format(sample["length"]))
@@ -484,7 +500,7 @@ def parse_keysounds(chart_file, out_file):
 				rpp_out.write(">\n")
 		rpp_out.write(">\n")
 		
-		print("Done, output to {}".format(out_file))
+	print("Done, output to {}".format(out_file))
 
 def main():
 	if len(sys.argv) < 2:
