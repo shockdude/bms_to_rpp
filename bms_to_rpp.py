@@ -1,4 +1,4 @@
-# BMS to RPP v0.6
+# BMS to RPP v0.7
 # Copyright (C) 2020 shockdude
 # REAPER is property of Cockos Incorporated
 
@@ -23,7 +23,7 @@ import math
 from pydub import AudioSegment
 
 def usage():
-	print("BMS to RPP v0.6")
+	print("BMS to RPP v0.7")
 	print("Convert a BMS chart into a playable REAPER project")
 	print("WAV keysounds recommended, OGG keysounds require ffmpeg/avconv and are slow to parse.")
 	print("Usage: {} chart_file.bms [output_filename.rpp]".format(sys.argv[0]))
@@ -96,7 +96,7 @@ def add_keysound(line):
 	if re_match != None and re_match.start() == 0:
 		line_split = line.split(" ")
 		keysound_index = line_split[0][-2:]
-		keysound_filename = line_split[1].strip()
+		keysound_filename = " ".join(line_split[1:]).strip()
 		if not os.path.isfile(keysound_filename):
 			keysound_filename = os.path.splitext(keysound_filename)[0] + ".ogg"
 		keysound_dict[keysound_index] = keysound_filename
@@ -303,6 +303,9 @@ def parse_keysounds(chart_file, out_file):
 					continue
 				add_channel(line)
 
+	# increase maximum measure by 1, in case there are notes in the last measure
+	max_measure += 1
+
 	# compute lengths of each keysound
 	print("Getting keysound lengths...")
 	print("This will take a while if the keysounds are not WAV")
@@ -467,7 +470,7 @@ def parse_keysounds(chart_file, out_file):
 				# create a track for each keysound
 				keysound_name, keysound_ext = os.path.splitext(keysound_dict[i])
 				rpp_out.write("<TRACK\n")
-				rpp_out.write("NAME {}\n".format(keysound_name))
+				rpp_out.write('NAME "{}"\n'.format(keysound_name))
 				rpp_out.write("VOLPAN {} 0 -1 -1 1\n".format(1/3.0)) # 1/3 track volume
 				# sort samples by position
 				sample_array = sample_dict[i]
