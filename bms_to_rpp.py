@@ -1,4 +1,4 @@
-# BMS to RPP v0.7
+# BMS to RPP v0.8
 # Copyright (C) 2020 shockdude
 # REAPER is property of Cockos Incorporated
 
@@ -23,8 +23,8 @@ import math
 from pydub import AudioSegment
 
 def usage():
-	print("BMS to RPP v0.7")
-	print("Convert a BMS chart into a playable REAPER project")
+	print("BMS to RPP v0.8")
+	print("Convert a BMS or DTX chart into a playable REAPER project")
 	print("WAV keysounds recommended, OGG keysounds require ffmpeg/avconv and are slow to parse.")
 	print("Usage: {} chart_file.bms [output_filename.rpp]".format(sys.argv[0]))
 	time.sleep(3)
@@ -34,19 +34,38 @@ WAV_EXT = ".wav"
 OGG_EXT = ".ogg"
 RPP_EXT = ".rpp"
 
+BMS_EXT = ".bms"
+BME_EXT = ".bme"
+DTX_EXT = ".dtx"
+
 # measures per second = 240.0 / BPM
 MPS_FACTOR = 240.0
 
- # channel info
-PLAYABLE_CHANNELS = ("01", "11", "12", "13", "14", "15", "16", "18", "19", "21", "22", "23", "24", "25", "26", "28", "29")
+# channel info
+BMS_PLAYABLE_CHANNELS = ("01", "11", "12", "13", "14", "15", "16", "18", "19", "21", "22", "23", "24", "25", "26", "28", "29")
+DTX_DRUM_CHANNELS = ("11", "12", "13", "14", "15", "16", "17", "18", "19", "1A")
+DTX_GUITAR_CHANNELS = ("20", "21", "22", "23", "24", "25", "26", "27")
+DTX_BASS_CHANNELS = ("A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7")
+DTX_PLAYABLE_CHANNELS = ("01",) + DTX_DRUM_CHANNELS + DTX_GUITAR_CHANNELS + DTX_BASS_CHANNELS
 MEASURE_LEN_CHANNEL = "02"
 BPM_CHANNEL = "03"
 EXTBPM_CHANNEL = "08"
 STOP_CHANNEL = "09"
 
+# pseudoenum for DTX vs BMS parsing mode
+MODE_BMS = 0
+MODE_DTX = 1
+parsing_mode = None
+
 # dictionary of keysound index to wav
 # e.g. #WAV1Z bass.wav --> "1Z" : "bass.wav"
 keysound_dict = {}
+
+# dictionary of keysound index to pan (dtx only)
+keysoundpan_dict = {}
+
+# dictionary of keysound index to volume (dtx only)
+keysoundvol_dict = {}
 
 # dictionary of extended bpm index to bpm values
 # e.g. #BPM2Y 120.0 --> "2Y" : 120.0
@@ -80,6 +99,11 @@ measurelentime_dict = {}
 # e.g. "00601" : ["01","00","23","AZ"]
 notes_dict = {}
 
+# DTX only - array of all guitar samples & all bass samples
+# to trim overlapping samples within the instrument
+guitar_samples = []
+bass_samples = []
+
 # keep track of the largest measure in the BMS
 max_measure = 0
 
@@ -96,10 +120,42 @@ def add_keysound(line):
 	if re_match != None and re_match.start() == 0:
 		line_split = line.split(" ")
 		keysound_index = line_split[0][-2:]
-		keysound_filename = " ".join(line_split[1:]).strip()
-		if not os.path.isfile(keysound_filename):
-			keysound_filename = os.path.splitext(keysound_filename)[0] + ".ogg"
-		keysound_dict[keysound_index] = keysound_filename
+		keysound_origname = " ".join(line_split[1:]).strip()
+		# look for wav or ogg, even if the original chart uses a different format
+		keysound_basename = os.path.splitext(keysound_origname)[0]
+		keysound_filename = keysound_basename + WAV_EXT
+		if os.path.isfile(keysound_filename):
+			keysound_dict[keysound_index] = keysound_filename
+			return True
+		keysound_filename = keysound_basename + OGG_EXT
+		if os.path.isfile(keysound_filename):
+			keysound_dict[keysound_index] = keysound_filename
+			return True
+		print("Error: could not find .wav or .ogg for {}".format(keysound_origname))
+		usage()
+	return False
+
+# create dictionary of keysound volume percentages
+def add_keysoundvolume(line):
+	bpm_re = re.compile("#VOLUME[\\w\\d][\\w\\d]")
+	re_match = bpm_re.match(line)
+	if re_match != None and re_match.start() == 0:
+		line_split = line.split(" ")
+		vol_index = line_split[0][-2:]
+		vol = float(line_split[1].strip()) / 100.0
+		keysoundvol_dict[vol_index] = vol
+		return True
+	return False
+
+# create dictionary of keysound pan percentages
+def add_keysoundpan(line):
+	bpm_re = re.compile("#PAN[\\w\\d][\\w\\d]")
+	re_match = bpm_re.match(line)
+	if re_match != None and re_match.start() == 0:
+		line_split = line.split(" ")
+		pan_index = line_split[0][-2:]
+		pan = float(line_split[1].strip()) / 100.0
+		keysoundpan_dict[pan_index] = pan
 		return True
 	return False
 
@@ -181,7 +237,12 @@ def add_channel(line):
 			max_measure = measure
 		
 		# channel with data array
-		if channel in (PLAYABLE_CHANNELS + (BPM_CHANNEL, EXTBPM_CHANNEL, STOP_CHANNEL)) and data != "00":
+		if parsing_mode == MODE_BMS:
+			playable_channels = BMS_PLAYABLE_CHANNELS
+		elif parsing_mode == MODE_DTX:
+			playable_channels = DTX_PLAYABLE_CHANNELS
+		
+		if channel in (playable_channels + (BPM_CHANNEL, EXTBPM_CHANNEL, STOP_CHANNEL)) and data != "00":
 			if channel == "01":
 				# bgm tracks are special and shouldn't be merged
 				# dictionary maps to array of arrays instead
@@ -243,7 +304,8 @@ def measure_offset_seconds(start_measure, beatpos, bpmpos_array, stop_positions,
 	return current_time
 
 # given a channel, get keysound samples & set their time position & length
-def add_keysounds_to_sample_dict(sample_dict, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len):
+def add_keysounds_to_sample_dict(sample_dict, channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len):
+	global guitar_samples, bass_samples
 	keysounds_len = len(keysounds)
 	for k in range(len(keysounds)):
 		keysound = keysounds[k]
@@ -253,9 +315,17 @@ def add_keysounds_to_sample_dict(sample_dict, keysounds, keysound_lengths, curre
 			sample = {}
 			sample["length"] = keysound_lengths[keysound]
 			sample["pos"] = current_timepos + measure_offset_seconds(measure_num, measure_num + k/keysounds_len, bpm_positions[current_bpmpos_i:], stop_positions, measure_len)
+			# unused but good for debugging
+			# sample["index"] = keysound
+			# sample["channel"] = channel
 			# TODO per-sample volume
 			#sample["volume"] = 1.0
 			sample_dict[keysound].append(sample)
+			if parsing_mode == MODE_DTX:
+				if channel in DTX_GUITAR_CHANNELS:
+					guitar_samples.append(sample)
+				elif channel in DTX_BASS_CHANNELS:
+					bass_samples.append(sample)
 
 # for sorting the sample array by the sample position
 def sample_pos_sort_key(s):
@@ -263,7 +333,7 @@ def sample_pos_sort_key(s):
 
 # primary keysound parsing & rpp generating function
 def parse_keysounds(chart_file, out_file):
-	global keysound_dict, extbpm_dict, bpm_dict, bpm_positions, stop_lengths, note_dict, max_measure
+	global keysound_dict, extbpm_dict, bpm_dict, bpm_positions, stop_lengths, note_dict, max_measure, guitar_samples, bass_samples
 	
 	# master volume of the chart, default to 100.0
 	master_volume = 100.0
@@ -272,8 +342,9 @@ def parse_keysounds(chart_file, out_file):
 	chart_bpm = 120.0
 	
 	# read bms chart
+	# assuming shift-jis encoding
 	print("Reading {}...".format(chart_file))
-	with open(chart_file, "r") as chart:
+	with open(chart_file, "r", encoding="shift_jis") as chart:
 		for line in chart:
 			if line.find("#") == 0:
 				line_strip = line.strip()
@@ -299,8 +370,14 @@ def parse_keysounds(chart_file, out_file):
 					continue
 				if add_bpmvalue(line):
 					continue
-				if add_stopvalue(line):
-					continue
+				if parsing_mode == MODE_DTX:
+					if add_keysoundvolume(line):
+						continue
+					if add_keysoundpan(line):
+						continue
+				elif parsing_mode == MODE_BMS:
+					if add_stopvalue(line):
+						continue
 				add_channel(line)
 
 	# increase maximum measure by 1, in case there are notes in the last measure
@@ -404,16 +481,21 @@ def parse_keysounds(chart_file, out_file):
 			bpmtime_dict[bpm_pos] = current_timepos + measure_offset_seconds(measure_num, bpm_pos, bpm_positions[current_bpmpos_i:], stop_positions, measure_len)
 		
 		# get each channel's keysounds
-		for channel in PLAYABLE_CHANNELS:
+		if parsing_mode == MODE_BMS:
+			playable_channels = BMS_PLAYABLE_CHANNELS
+		elif parsing_mode == MODE_DTX:
+			playable_channels = DTX_PLAYABLE_CHANNELS
+		
+		for channel in playable_channels:
 			header = "{:03d}{}".format(measure_num, channel)
 			if header in notes_dict:
 				if channel == "01":
 					# multiple bgm keysound arrays
 					for keysounds in notes_dict[header]:
-						add_keysounds_to_sample_dict(sample_dict, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
+						add_keysounds_to_sample_dict(sample_dict, channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
 				else:
 					keysounds = notes_dict[header]
-					add_keysounds_to_sample_dict(sample_dict, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
+					add_keysounds_to_sample_dict(sample_dict, channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
 		
 		# move current time to next measure
 		current_timepos += measure_offset_seconds(measure_num, measure_num + 1, bpm_positions[current_bpmpos_i:], stop_positions, measure_len)
@@ -430,6 +512,21 @@ def parse_keysounds(chart_file, out_file):
 	# sort keysounds by their index
 	keysound_indices = list(keysound_dict)
 	keysound_indices.sort()
+	
+	# DTX guitar & bass, trim overlapping samples
+	if parsing_mode == MODE_DTX:
+		guitar_samples.sort(key=sample_pos_sort_key)
+		for s in range(len(guitar_samples) - 1):
+			sample = guitar_samples[s]
+			next_sample = guitar_samples[s+1]
+			if sample["pos"] + sample["length"] > next_sample["pos"]:
+				sample["length"] = next_sample["pos"] - sample["pos"]
+		bass_samples.sort(key=sample_pos_sort_key)
+		for s in range(len(bass_samples) - 1):
+			sample = bass_samples[s]
+			next_sample = bass_samples[s+1]
+			if sample["pos"] + sample["length"] > next_sample["pos"]:
+				sample["length"] = next_sample["pos"] - sample["pos"]
 	
 	# write rpp
 	print("Writing {}...".format(out_file))
@@ -471,7 +568,18 @@ def parse_keysounds(chart_file, out_file):
 				keysound_name, keysound_ext = os.path.splitext(keysound_dict[i])
 				rpp_out.write("<TRACK\n")
 				rpp_out.write('NAME "{}"\n'.format(keysound_name))
-				rpp_out.write("VOLPAN {} 0 -1 -1 1\n".format(1/3.0)) # 1/3 track volume
+				if parsing_mode == MODE_BMS:
+					rpp_out.write("VOLPAN {} 0 -1 -1 1\n".format(1/3.0)) # 1/3 track volume
+				elif parsing_mode == MODE_DTX:
+					if i in keysoundvol_dict:
+						vol = keysoundvol_dict[i]
+					else:
+						vol = 1.0
+					if i in keysoundpan_dict:
+						pan = keysoundpan_dict[i]
+					else:
+						pan = 0.0
+					rpp_out.write("VOLPAN {} {} -1 -1 1\n".format(vol / 2.0, pan)) # 1/2 track volume
 				# sort samples by position
 				sample_array = sample_dict[i]
 				sample_array.sort(key=sample_pos_sort_key)
@@ -506,10 +614,19 @@ def parse_keysounds(chart_file, out_file):
 	print("Done, output to {}".format(out_file))
 
 def main():
+	global parsing_mode
 	if len(sys.argv) < 2:
 		usage()
 	else:
 		chart_file = sys.argv[1]
+		chart_filename, chart_ext = os.path.splitext(chart_file)
+		if chart_ext == BMS_EXT or chart_ext == BME_EXT:
+			parsing_mode = MODE_BMS
+		elif chart_ext == DTX_EXT:
+			parsing_mode = MODE_DTX
+		else:
+			print("Error: Unknown chart file type: {}".format(chart_ext))
+			usage()
 		if len(sys.argv) > 2:
 			out_file = sys.argv[2]
 		else:
