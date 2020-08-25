@@ -1,4 +1,4 @@
-# BMS to RPP v0.83
+# BMS to RPP v0.84
 # Copyright (C) 2020 shockdude
 # REAPER is property of Cockos Incorporated
 
@@ -23,7 +23,7 @@ import math
 from pydub import AudioSegment
 
 def usage():
-	print("BMS to RPP v0.83")
+	print("BMS to RPP v0.84")
 	print("Convert a BMS or DTX chart into a playable REAPER project")
 	print("WAV keysounds recommended, OGG keysounds require ffmpeg/avconv and are slow to parse.")
 	print("Usage: {} chart_file.bms [output_filename.rpp]".format(sys.argv[0]))
@@ -103,10 +103,11 @@ measurelentime_dict = {}
 # e.g. "00601" : ["01","00","23","AZ"]
 notes_dict = {}
 
-# DTX only - array of all guitar samples & all bass samples
-# to trim overlapping samples within the instrument
-guitar_samples = []
-bass_samples = []
+# dictionary mapping keysound index to keysound sample positions & lengths
+sample_dict = {}
+
+# dictionary mapping channel to keysound sample positions & lengths
+channelsample_dict = {}
 
 # keep track of the largest measure in the BMS
 max_measure = 0
@@ -188,28 +189,29 @@ def lcm(a,b):
 	return int(a*b/math.gcd(a,b))
 
 # merge the data of multiple instances of the same channel
-def update_data(data1, data2):
-	data1_len = len(data1)
-	data2_len = len(data2)
-	data_lcm = lcm(data1_len, data2_len)
-	data1_factor = data_lcm/data1_len
-	data2_factor = data_lcm/data2_len
-	new_data = [0]*data_lcm
+def update_data(old_data, new_data):
+	old_data_len = len(old_data)
+	new_data_len = len(new_data)
+	data_lcm = lcm(old_data_len, new_data_len)
+	old_data_factor = data_lcm/old_data_len
+	new_data_factor = data_lcm/new_data_len
+	merged_data = [0]*data_lcm
 	for i in range(data_lcm):
-		if i % data1_factor == 0:
-			data1_value = data1[int(i/data1_factor)]
+		if i % old_data_factor == 0:
+			old_data_value = old_data[int(i/old_data_factor)]
 		else:
-			data1_value = "00"
-		if i % data2_factor == 0:
-			data2_value = data2[int(i/data2_factor)]
+			old_data_value = "00"
+		if i % new_data_factor == 0:
+			new_data_value = new_data[int(i/new_data_factor)]
 		else:
-			data2_value = "00"
+			new_data_value = "00"
 			
-		if data1_value > data2_value:
-			new_data[i] = data1_value
+		# give priority to the newer data unless newer data is 00
+		if new_data_value == "00":
+			merged_data[i] = old_data_value
 		else:
-			new_data[i] = data2_value
-	return new_data
+			merged_data[i] = new_data_value
+	return merged_data
 
 # identify channels & save their data
 def add_channel(line):
@@ -245,7 +247,7 @@ def add_channel(line):
 				# merge duplicate notes
 				if header in notes_dict:
 					old_data = notes_dict[header]
-					notes_dict[header] = update_data(data_array, old_data)
+					notes_dict[header] = update_data(old_data, data_array)
 				else:
 					notes_dict[header] = data_array
 		# measure length channel
@@ -296,14 +298,16 @@ def measure_offset_seconds(start_measure, beatpos, bpmpos_array, stop_positions,
 	return current_time
 
 # given a channel, get keysound samples & set their time position & length
-def add_keysounds_to_sample_dict(sample_dict, channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len):
-	global guitar_samples, bass_samples
+def add_keysounds_to_sample_dict(channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len):
+	global sample_dict, channelsample_dict
 	keysounds_len = len(keysounds)
 	for k in range(len(keysounds)):
 		keysound = keysounds[k]
 		if keysound in keysound_lengths:
 			if keysound not in sample_dict:
 				sample_dict[keysound] = []
+			if channel not in channelsample_dict:
+				channelsample_dict[channel] = []
 			sample = {}
 			sample["length"] = keysound_lengths[keysound]
 			sample["pos"] = current_timepos + measure_offset_seconds(measure_num, measure_num + k/keysounds_len, bpm_positions[current_bpmpos_i:], stop_positions, measure_len)
@@ -313,11 +317,7 @@ def add_keysounds_to_sample_dict(sample_dict, channel, keysounds, keysound_lengt
 			# TODO per-sample volume
 			#sample["volume"] = 1.0
 			sample_dict[keysound].append(sample)
-			if parsing_mode == MODE_DTX:
-				if channel in DTX_GUITAR_CHANNELS:
-					guitar_samples.append(sample)
-				elif channel in DTX_BASS_CHANNELS:
-					bass_samples.append(sample)
+			channelsample_dict[channel].append(sample)
 
 # for sorting the sample array by the sample position
 def sample_pos_sort_key(s):
@@ -325,7 +325,7 @@ def sample_pos_sort_key(s):
 
 # primary keysound parsing & rpp generating function
 def parse_keysounds(chart_file, out_file):
-	global keysound_dict, extbpm_dict, bpm_dict, bpm_positions, stop_lengths, note_dict, max_measure, guitar_samples, bass_samples
+	global keysound_dict, extbpm_dict, bpm_dict, bpm_positions, stop_lengths, note_dict, max_measure, sample_dict, channelsample_dict
 	
 	# master volume of the chart, default to 100.0
 	master_volume = 100.0
@@ -388,8 +388,6 @@ def parse_keysounds(chart_file, out_file):
 			usage()
 		keysound_lengths[keysound] = sound.frame_count() / sound.frame_rate
 		
-	# dictionary to contain positions & lengths of each sample
-	sample_dict = {}
 	# current time position in seconds, starting at 0
 	current_timepos = 0
 	# current bpm position index, starting at 0
@@ -484,10 +482,10 @@ def parse_keysounds(chart_file, out_file):
 				if channel == "01":
 					# multiple bgm keysound arrays
 					for keysounds in notes_dict[header]:
-						add_keysounds_to_sample_dict(sample_dict, channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
+						add_keysounds_to_sample_dict(channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
 				else:
 					keysounds = notes_dict[header]
-					add_keysounds_to_sample_dict(sample_dict, channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
+					add_keysounds_to_sample_dict(channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
 		
 		# move current time to next measure
 		current_timepos += measure_offset_seconds(measure_num, measure_num + 1, bpm_positions[current_bpmpos_i:], stop_positions, measure_len)
@@ -504,15 +502,33 @@ def parse_keysounds(chart_file, out_file):
 	# sort keysounds by their index
 	keysound_indices = list(keysound_dict)
 	keysound_indices.sort()
-	
-	# DTX guitar & bass, trim overlapping samples
+
+	# DTX-specific overlapping sample handling
 	if parsing_mode == MODE_DTX:
+		guitar_samples = []
+		bass_samples = []
+		for channel in channelsample_dict:
+			if channel in DTX_BG_CHANNELS:
+				# trim overlapping samples within each background channel
+				sample_array = channelsample_dict[channel]
+				sample_array.sort(key=sample_pos_sort_key)
+				for s in range(len(sample_array) - 1):
+					sample = sample_array[s]
+					next_sample = sample_array[s+1]
+					if sample["pos"] + sample["length"] > next_sample["pos"]:
+						sample["length"] = next_sample["pos"] - sample["pos"]
+			elif channel in DTX_GUITAR_CHANNELS:
+				guitar_samples += channelsample_dict[channel]
+			elif channel in DTX_BASS_CHANNELS:
+				bass_channels += channelsample_dict[channel]
+		# trim overlapping samples in guitar
 		guitar_samples.sort(key=sample_pos_sort_key)
 		for s in range(len(guitar_samples) - 1):
 			sample = guitar_samples[s]
 			next_sample = guitar_samples[s+1]
 			if sample["pos"] + sample["length"] > next_sample["pos"]:
 				sample["length"] = next_sample["pos"] - sample["pos"]
+		# trim overlapping samples in bass
 		bass_samples.sort(key=sample_pos_sort_key)
 		for s in range(len(bass_samples) - 1):
 			sample = bass_samples[s]
@@ -577,11 +593,12 @@ def parse_keysounds(chart_file, out_file):
 				sample_array.sort(key=sample_pos_sort_key)
 				for s in range(len(sample_array)):
 					sample = sample_array[s]
-					# cut the lengths of overlapping samples
-					if s + 1 < len(sample_array):
-						next_sample = sample_array[s+1]
-						if sample["pos"] + sample["length"] > next_sample["pos"]:
-							sample["length"] = next_sample["pos"] - sample["pos"]
+					if parsing_mode == MODE_BMS:
+						# cut the lengths of BMS samples that overlap themselves
+						if s + 1 < len(sample_array):
+							next_sample = sample_array[s+1]
+							if sample["pos"] + sample["length"] > next_sample["pos"]:
+								sample["length"] = next_sample["pos"] - sample["pos"]
 					# add a keysound sample to the track
 					rpp_out.write("<ITEM\n")
 					rpp_out.write("POSITION {}\n".format(sample["pos"]))
