@@ -1,4 +1,4 @@
-# BMS to RPP v0.82
+# BMS to RPP v0.83
 # Copyright (C) 2020 shockdude
 # REAPER is property of Cockos Incorporated
 
@@ -23,7 +23,7 @@ import math
 from pydub import AudioSegment
 
 def usage():
-	print("BMS to RPP v0.82")
+	print("BMS to RPP v0.83")
 	print("Convert a BMS or DTX chart into a playable REAPER project")
 	print("WAV keysounds recommended, OGG keysounds require ffmpeg/avconv and are slow to parse.")
 	print("Usage: {} chart_file.bms [output_filename.rpp]".format(sys.argv[0]))
@@ -46,7 +46,11 @@ BMS_PLAYABLE_CHANNELS = ("01", "11", "12", "13", "14", "15", "16", "18", "19", "
 DTX_DRUM_CHANNELS = ("11", "12", "13", "14", "15", "16", "17", "18", "19", "1A")
 DTX_GUITAR_CHANNELS = ("20", "21", "22", "23", "24", "25", "26", "27")
 DTX_BASS_CHANNELS = ("A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7")
-DTX_PLAYABLE_CHANNELS = ("01",) + DTX_DRUM_CHANNELS + DTX_GUITAR_CHANNELS + DTX_BASS_CHANNELS
+DTX_BG_CHANNELS = ("01", "61", "62", "63", "64", "65", "66", "67", "68", "69",
+					"70", "71", "72", "73", "74", "75", "76", "77", "78", "79",
+					"80", "81", "82", "83", "84", "85", "86", "87", "88", "89",
+					"90", "91", "92")
+DTX_PLAYABLE_CHANNELS = DTX_BG_CHANNELS + DTX_DRUM_CHANNELS + DTX_GUITAR_CHANNELS + DTX_BASS_CHANNELS
 MEASURE_LEN_CHANNEL = "02"
 BPM_CHANNEL = "03"
 EXTBPM_CHANNEL = "08"
