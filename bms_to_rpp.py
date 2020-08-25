@@ -1,4 +1,4 @@
-# BMS to RPP v0.8
+# BMS to RPP v0.82
 # Copyright (C) 2020 shockdude
 # REAPER is property of Cockos Incorporated
 
@@ -23,7 +23,7 @@ import math
 from pydub import AudioSegment
 
 def usage():
-	print("BMS to RPP v0.8")
+	print("BMS to RPP v0.82")
 	print("Convert a BMS or DTX chart into a playable REAPER project")
 	print("WAV keysounds recommended, OGG keysounds require ffmpeg/avconv and are slow to parse.")
 	print("Usage: {} chart_file.bms [output_filename.rpp]".format(sys.argv[0]))
@@ -113,23 +113,28 @@ def find_tag(line, tag):
 		return line[len(tag):]
 	return None
 
+# parse header value
+def get_header_value(line, header):
+	header_re = re.compile("#{}([\\w\\d][\\w\\d])(:\\s*|\\s+)(.+)\\s*".format(header))
+	re_match = header_re.match(line)
+	if re_match != None and re_match.start() == 0:
+		index = re_match.group(1)
+		value = re_match.group(3)
+		return index, value
+	return None, None
+
 # create dictionary of keysounds
 def add_keysound(line):
-	wav_re = re.compile("#WAV[\\w\\d][\\w\\d]")
-	re_match = wav_re.match(line)
-	if re_match != None and re_match.start() == 0:
-		line_split = line.split(" ")
-		keysound_index = line_split[0][-2:]
-		keysound_origname = " ".join(line_split[1:]).strip()
-		# look for wav or ogg, even if the original chart uses a different format
-		keysound_basename = os.path.splitext(keysound_origname)[0]
+	index, value = get_header_value(line, "WAV")
+	if index != None and value != None:
+		keysound_basename = os.path.splitext(value)[0]
 		keysound_filename = keysound_basename + WAV_EXT
 		if os.path.isfile(keysound_filename):
-			keysound_dict[keysound_index] = keysound_filename
+			keysound_dict[index] = keysound_filename
 			return True
 		keysound_filename = keysound_basename + OGG_EXT
 		if os.path.isfile(keysound_filename):
-			keysound_dict[keysound_index] = keysound_filename
+			keysound_dict[index] = keysound_filename
 			return True
 		print("Error: could not find .wav or .ogg for {}".format(keysound_origname))
 		usage()
@@ -137,49 +142,33 @@ def add_keysound(line):
 
 # create dictionary of keysound volume percentages
 def add_keysoundvolume(line):
-	bpm_re = re.compile("#VOLUME[\\w\\d][\\w\\d]")
-	re_match = bpm_re.match(line)
-	if re_match != None and re_match.start() == 0:
-		line_split = line.split(" ")
-		vol_index = line_split[0][-2:]
-		vol = float(line_split[1].strip()) / 100.0
-		keysoundvol_dict[vol_index] = vol
+	index, value = get_header_value(line, "VOLUME")
+	if index != None and value != None:
+		keysoundvol_dict[index] = float(value) / 100.0
 		return True
 	return False
 
 # create dictionary of keysound pan percentages
 def add_keysoundpan(line):
-	bpm_re = re.compile("#PAN[\\w\\d][\\w\\d]")
-	re_match = bpm_re.match(line)
-	if re_match != None and re_match.start() == 0:
-		line_split = line.split(" ")
-		pan_index = line_split[0][-2:]
-		pan = float(line_split[1].strip()) / 100.0
-		keysoundpan_dict[pan_index] = pan
+	index, value = get_header_value(line, "PAN")
+	if index != None and value != None:
+		keysoundpan_dict[index] = float(value) / 100.0
 		return True
 	return False
 
 # create dictionary of extended bpm values
 def add_bpmvalue(line):
-	bpm_re = re.compile("#BPM[\\w\\d][\\w\\d]")
-	re_match = bpm_re.match(line)
-	if re_match != None and re_match.start() == 0:
-		line_split = line.split(" ")
-		bpmvalue_index = line_split[0][-2:]
-		bpmvalue = float(line_split[1].strip())
-		extbpm_dict[bpmvalue_index] = bpmvalue
+	index, value = get_header_value(line, "BPM")
+	if index != None and value != None:
+		extbpm_dict[index] = float(value)
 		return True
 	return False
 		
 # create dictionary of stop values
 def add_stopvalue(line):
-	bpm_re = re.compile("#STOP[\\w\\d][\\w\\d]")
-	re_match = bpm_re.match(line)
-	if re_match != None and re_match.start() == 0:
-		line_split = line.split(" ")
-		stopvalue_index = line_split[0][-2:]
-		stopvalue = float(line_split[1].strip())
-		stop_dict[stopvalue_index] = stopvalue
+	index, value = get_header_value(line, "STOP")
+	if index != None and value != None:
+		stop_dict[index] = float(value)
 		return True
 	return False
 
@@ -222,27 +211,26 @@ def update_data(data1, data2):
 def add_channel(line):
 	global max_measure
 	# use regular expression to match the channel format
-	note_re = re.compile("#\\d\\d\\d\\d\\d:")
+	note_re = re.compile("#(\\d\\d\\d[\\d\\w][\\d\\w])(:\\s*|\\s+)(\\S+)")
 	re_match = note_re.match(line)
 	if re_match != None and re_match.start() == 0:
-		line_split = line.split(":")
-		header = line_split[0][1:]
+		header = re_match.group(1)
 		measure = int(header[0:3])
 		channel = header[3:5]
-		data = line_split[1].strip()
-		data_array = data_to_array(data)
+		data = re_match.group(3)
 		
 		# set the largest measure found
 		if measure > max_measure:
 			max_measure = measure
 		
-		# channel with data array
 		if parsing_mode == MODE_BMS:
 			playable_channels = BMS_PLAYABLE_CHANNELS
 		elif parsing_mode == MODE_DTX:
 			playable_channels = DTX_PLAYABLE_CHANNELS
-		
+
+		# check for channel with data array
 		if channel in (playable_channels + (BPM_CHANNEL, EXTBPM_CHANNEL, STOP_CHANNEL)) and data != "00":
+			data_array = data_to_array(data)
 			if channel == "01":
 				# bgm tracks are special and shouldn't be merged
 				# dictionary maps to array of arrays instead
