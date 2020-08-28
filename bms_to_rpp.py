@@ -636,6 +636,10 @@ def main():
 		else:
 			print("Error: Unknown chart file type: {}".format(chart_ext))
 			usage()
+	
+		# change working directory to directory of the input file
+		os.chdir(os.path.dirname(chart_file))
+			
 		if len(sys.argv) > 2:
 			out_file = sys.argv[2]
 		else:
