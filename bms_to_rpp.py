@@ -1,4 +1,4 @@
-# BMS to RPP v0.84
+# BMS to RPP
 # Copyright (C) 2020 shockdude
 # REAPER is property of Cockos Incorporated
 
@@ -15,6 +15,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+VERSION = "v0.85"
+
 import sys
 import os
 import time
@@ -23,7 +25,7 @@ import math
 from pydub import AudioSegment
 
 def usage():
-	print("BMS to RPP v0.84")
+	print("BMS to RPP {}".format(VERSION))
 	print("Convert a BMS or DTX chart into a playable REAPER project")
 	print("WAV keysounds recommended, OGG keysounds require ffmpeg/avconv and are slow to parse.")
 	print("Usage: {} chart_file.bms [output_filename.rpp]".format(sys.argv[0]))
