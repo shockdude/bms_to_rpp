@@ -8,7 +8,7 @@ Or just drag-and-drop the chart onto `bms_to_rpp.py`
 
 Supports WAV (PCM) keysounds. \
 If your BMS does not include WAV keysounds, recommend converting them to WAV first. \
-OGG keysounds supported only if ffmpeg is installed, and processing will be very slow.
+OGG/MP3 keysounds supported only if ffmpeg is installed, and processing will be very slow.
 
 Supports BPMs, extended BPMs, measure lengths/time signatures, and STOPs. \
 Negative BPMs untested. Other BMS features may not be implemented.

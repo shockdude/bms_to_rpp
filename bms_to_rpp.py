@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-VERSION = "v0.85"
+VERSION = "v0.9"
 
 import sys
 import os
@@ -27,24 +27,27 @@ from pydub import AudioSegment
 def usage():
 	print("BMS to RPP {}".format(VERSION))
 	print("Convert a BMS or DTX chart into a playable REAPER project")
-	print("WAV keysounds recommended, OGG keysounds require ffmpeg/avconv and are slow to parse.")
+	print("WAV keysounds recommended, OGG/MP3 keysounds require ffmpeg/avconv and are slow to parse.")
 	print("Usage: {} chart_file.bms [output_filename.rpp]".format(sys.argv[0]))
 	time.sleep(3)
 	sys.exit(1)
 
 WAV_EXT = ".wav"
 OGG_EXT = ".ogg"
+MP3_EXT = ".mp3"
 RPP_EXT = ".rpp"
 
-BMS_EXT = ".bms"
-BME_EXT = ".bme"
+BMS_EXTS = (".bms", ".bme", ".bml")
 DTX_EXT = ".dtx"
 
 # measures per second = 240.0 / BPM
 MPS_FACTOR = 240.0
 
 # channel info
-BMS_PLAYABLE_CHANNELS = ("01", "11", "12", "13", "14", "15", "16", "18", "19", "21", "22", "23", "24", "25", "26", "28", "29")
+BMS_PLAYABLE_CHANNELS = ("01", "11", "12", "13", "14", "15", "16", "18", "19",
+						"21", "22", "23", "24", "25", "26", "28", "29",
+						"51", "52", "53", "54", "55", "56", "58", "59",
+						"61", "62", "63", "64", "65", "66", "68", "69")
 DTX_DRUM_CHANNELS = ("11", "12", "13", "14", "15", "16", "17", "18", "19", "1A")
 DTX_GUITAR_CHANNELS = ("20", "21", "22", "23", "24", "25", "26", "27")
 DTX_BASS_CHANNELS = ("A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7")
@@ -114,13 +117,16 @@ channelsample_dict = {}
 # keep track of the largest measure in the BMS
 max_measure = 0
 
-# find a bms header tag
-def find_tag(line, tag):
-	if line.find(tag) == 0:
-		return line[len(tag):]
+# get simple header tag value
+def get_tag_value(line, tag):
+	tag_re = re.compile("#{}\\s+(.+)\\s*".format(tag))
+	re_match = tag_re.match(line)
+	if re_match != None and re_match.start() == 0:
+		value = re_match.group(1)
+		return value
 	return None
 
-# parse header value
+# parse header with channel and get value
 def get_header_value(line, header):
 	header_re = re.compile("#{}([\\w\\d][\\w\\d])(:\\s*|\\s+)(.+)\\s*".format(header))
 	re_match = header_re.match(line)
@@ -143,8 +149,11 @@ def add_keysound(line):
 		if os.path.isfile(keysound_filename):
 			keysound_dict[index] = keysound_filename
 			return True
-		print("Error: could not find .wav or .ogg for {}".format(keysound_origname))
-		usage()
+		keysound_filename = keysound_basename + MP3_EXT
+		if os.path.isfile(keysound_filename):
+			keysound_dict[index] = keysound_filename
+			return True
+		print("Warning: could not find wav/ogg/mp3 for {}".format(keysound_basename))
 	return False
 
 # create dictionary of keysound volume percentages
@@ -182,8 +191,17 @@ def add_stopvalue(line):
 # convert channel data to an array
 def data_to_array(data):
 	out = []
-	for i in range(0, len(data), 2):
-		out.append(data[i:i+2])
+	note = ""
+	for c in data:
+		if c.isdigit() or c.isalpha(): # ignore invalid characters
+			note += c
+			if len(note) == 2:
+				out.append(note)
+				note = ""
+		elif c == ";": # DTX comment
+			break
+	if note != "":
+		print("Warning: odd channel data length, {}".format(data))
 	return out
 
 # least common multiple
@@ -344,20 +362,36 @@ def parse_keysounds(chart_file, out_file):
 				line_strip = line.strip()
 				
 				# locate chart bpm
-				data = find_tag(line_strip, "#BPM ")
+				data = get_tag_value(line_strip, "BPM")
 				if data != None:
 					# beats (measures) start at 1, not 0
-					chart_bpm = float(data)
-					bpm_dict[0.0] = float(data)
+					try:
+						chart_bpm = float(data)
+					except:
+						print("Warning: invalid #BPM value {}".format(data))
+						continue
+					bpm_dict[0.0] = chart_bpm
 					bpm_positions = [0.0]
 					bpmtime_dict[0.0] = 0
 					continue
 				
 				# locate & set master volume
-				data = find_tag(line_strip, "#VOLWAV ")
+				data = get_tag_value(line_strip, "VOLWAV")
 				if data != None:
-					master_volume = float(data)
+					try:
+						master_volume = float(data)
+					except:
+						print("Warning: invalid #VOLWAV value {}".format(data))
 					continue
+				
+				# check lntype (only type 1 supported)
+				data = get_tag_value(line_strip, "LNTYPE")
+				if data != None:
+					try:
+						if int(data) != 1:
+							print("Warning: unsupported #LNTYPE {}, only #LNTYPE 1 is supported".format(data))
+					except:
+						print("Warning: invalid #LNTYPE value {}, only #LNTYPE 1 is supported".format(data))
 				
 				# locate other bms data
 				if add_keysound(line):
@@ -385,7 +419,7 @@ def parse_keysounds(chart_file, out_file):
 		keysound_file = keysound_dict[keysound]
 		try:
 			sound = AudioSegment.from_file(keysound_file)
-		except FileNotFoundError:
+		except:
 			print("ERROR: Could not load keysound file {}. If not WAV, missing ffmpeg/avconv?".format(keysound_file))
 			usage()
 		keysound_lengths[keysound] = sound.frame_count() / sound.frame_rate
@@ -567,7 +601,7 @@ def parse_keysounds(chart_file, out_file):
 					ts_num *= den4_factor
 					ts_den *= den4_factor
 				if ts_num > 256 or ts_den > 256:
-					print("Ignoring unusual time signature {}/{} at beat {}".format(ts_num, ts_den, measurelen_pos))
+					print("Warning: Ignoring unusual time signature {}/{} at beat {}".format(ts_num, ts_den, measurelen_pos))
 				else:
 					rpp_out.write("PT {} 0 1 {} 0 3\n".format(measurelentime, ts_den*65536 + ts_num))
 			rpp_out.write(">\n")
@@ -631,16 +665,16 @@ def main():
 	else:
 		chart_file = sys.argv[1]
 		chart_filename, chart_ext = os.path.splitext(chart_file)
-		if chart_ext == BMS_EXT or chart_ext == BME_EXT:
+		if chart_ext in BMS_EXTS:
 			parsing_mode = MODE_BMS
 		elif chart_ext == DTX_EXT:
 			parsing_mode = MODE_DTX
 		else:
-			print("Error: Unknown chart file type: {}".format(chart_ext))
+			print("ERROR: Unknown chart file type: {}".format(chart_ext))
 			usage()
 	
 		# change working directory to directory of the input file
-		os.chdir(os.path.dirname(chart_file))
+		os.chdir(os.path.dirname(os.path.realpath(chart_file)))
 			
 		if len(sys.argv) > 2:
 			out_file = sys.argv[2]
