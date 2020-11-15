@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-VERSION = "v0.9"
+VERSION = "v0.92"
 
 import sys
 import os
@@ -37,17 +37,18 @@ OGG_EXT = ".ogg"
 MP3_EXT = ".mp3"
 RPP_EXT = ".rpp"
 
-BMS_EXTS = (".bms", ".bme", ".bml")
+BMS_EXTS = (".bms", ".bme", ".bml", ".pms")
 DTX_EXT = ".dtx"
 
 # measures per second = 240.0 / BPM
 MPS_FACTOR = 240.0
 
 # channel info
-BMS_PLAYABLE_CHANNELS = ("01", "11", "12", "13", "14", "15", "16", "18", "19",
-						"21", "22", "23", "24", "25", "26", "28", "29",
-						"51", "52", "53", "54", "55", "56", "58", "59",
-						"61", "62", "63", "64", "65", "66", "68", "69")
+BMS_PLAYABLE_CHANNELS = ("01",
+						"11", "12", "13", "14", "15", "16", "17", "18", "19",
+						"21", "22", "23", "24", "25", "26", "27", "28", "29",
+						"51", "52", "53", "54", "55", "56", "57", "58", "59",
+						"61", "62", "63", "64", "65", "66", "67", "68", "69")
 DTX_DRUM_CHANNELS = ("11", "12", "13", "14", "15", "16", "17", "18", "19", "1A")
 DTX_GUITAR_CHANNELS = ("20", "21", "22", "23", "24", "25", "26", "27")
 DTX_BASS_CHANNELS = ("A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7")
@@ -647,6 +648,8 @@ def parse_keysounds(chart_file, out_file):
 						rpp_out.write("<SOURCE WAVE\n")
 					elif keysound_ext.lower() == OGG_EXT:
 						rpp_out.write("<SOURCE VORBIS\n")
+					elif keysound_ext.lower() == MP3_EXT:
+						rpp_out.write("<SOURCE MP3\n")
 					else:
 						# unknown audio type
 						rpp_out.write("<SOURCE\n")
