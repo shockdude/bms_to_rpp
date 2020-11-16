@@ -71,6 +71,9 @@ parsing_mode = None
 # e.g. #WAV1Z bass.wav --> "1Z" : "bass.wav"
 keysound_dict = {}
 
+# keysound indices in list form to maintain ordering
+keysound_indices = []
+
 # dictionary of keysound index to pan (dtx only)
 keysoundpan_dict = {}
 
@@ -145,14 +148,17 @@ def add_keysound(line):
 		keysound_filename = keysound_basename + WAV_EXT
 		if os.path.isfile(keysound_filename):
 			keysound_dict[index] = keysound_filename
+			keysound_indices.append(index)
 			return True
 		keysound_filename = keysound_basename + OGG_EXT
 		if os.path.isfile(keysound_filename):
 			keysound_dict[index] = keysound_filename
+			keysound_indices.append(index)
 			return True
 		keysound_filename = keysound_basename + MP3_EXT
 		if os.path.isfile(keysound_filename):
 			keysound_dict[index] = keysound_filename
+			keysound_indices.append(index)
 			return True
 		print("Warning: could not find wav/ogg/mp3 for {}".format(keysound_basename))
 	return False
@@ -346,7 +352,7 @@ def sample_pos_sort_key(s):
 
 # primary keysound parsing & rpp generating function
 def parse_keysounds(chart_file, out_file):
-	global keysound_dict, extbpm_dict, bpm_dict, bpm_positions, stop_lengths, note_dict, max_measure, sample_dict, channelsample_dict
+	global keysound_dict, keysound_indices, extbpm_dict, bpm_dict, bpm_positions, stop_lengths, note_dict, max_measure, sample_dict, channelsample_dict
 	
 	# master volume of the chart, default to 100.0
 	master_volume = 100.0
@@ -535,10 +541,6 @@ def parse_keysounds(chart_file, out_file):
 			measurelen_dict[measure_num + 1] = 1.0
 			measurelentime_dict[measure_num + 1] = current_timepos
 		current_bpmpos_i += (bpms_in_measure - 1)
-	
-	# sort keysounds by their index
-	keysound_indices = list(keysound_dict)
-	keysound_indices.sort()
 
 	# DTX-specific overlapping sample handling
 	if parsing_mode == MODE_DTX:
