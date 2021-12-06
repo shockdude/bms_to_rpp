@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-VERSION = "v0.92"
+VERSION = "v0.93"
 
 import sys
 import os
@@ -581,7 +581,13 @@ def parse_keysounds(chart_file, out_file):
 		rpp_out.write("<REAPER_PROJECT\n")
 		rpp_out.write("TEMPO {} 4 4\n".format(chart_bpm))
 		rpp_out.write("MASTERTRACKVIEW 1 0.6667 0.5 0.5 0 0 0 0 0 0\n")
-		rpp_out.write("MASTER_VOLUME {} 0 -1 -1 1\n".format(master_volume / 100.0))
+		
+		if parsing_mode == MODE_BMS:
+			# 1/3 master volume
+			rpp_out.write("MASTER_VOLUME {} 0 -1 -1 1\n".format(master_volume / 300.0))
+		elif parsing_mode == MODE_DTX:
+			# 1/2 master volume
+			rpp_out.write("MASTER_VOLUME {} 0 -1 -1 1\n".format(master_volume / 200.0))
 		rpp_out.write("VIDEO_CONFIG 0 0 256\n")
 		rpp_out.write("PANMODE 3\n")
 		# create tempomap - bpms & time signatures
@@ -608,27 +614,72 @@ def parse_keysounds(chart_file, out_file):
 				else:
 					rpp_out.write("PT {} 0 1 {} 0 3\n".format(measurelentime, ts_den*65536 + ts_num))
 			rpp_out.write(">\n")
+		
+		# group keysounds with the same prefix
+		keysound_group_re = re.compile(r"^([A-Za-z\-]+).*$")
+		keysound_in_group = False
+		
 		# create keysound tracks
-		for i in keysound_indices:
-			if i in sample_dict:
+		for i in range(len(keysound_indices)):
+			keysound_index = keysound_indices[i]
+			if keysound_index in sample_dict:
 				# create a track for each keysound
-				keysound_name, keysound_ext = os.path.splitext(keysound_dict[i])
+				keysound_name, keysound_ext = os.path.splitext(keysound_dict[keysound_index])
+				
+				# should we make a new track group or end an existing one?
+				keysound_new_group = False
+				keysound_end_group = False
+				keysound_group = None
+				keysound_group_match = keysound_group_re.match(keysound_name)
+				if keysound_group_match != None:
+					keysound_group = keysound_group_match.group(1)
+					# lookahead to next keysound
+					keysound_next_group = None
+					j = i + 1
+					while j < len(keysound_indices):
+						keysound_next_index = keysound_indices[j]
+						if keysound_next_index in sample_dict:
+							keysound_next_name, keysound_next_ext = os.path.splitext(keysound_dict[keysound_next_index])
+							keysound_next_group_match = keysound_group_re.match(keysound_next_name)
+							if keysound_next_group_match != None:
+								keysound_next_group = keysound_next_group_match.group(1)
+								j = len(keysound_indices)
+						else:
+							j += 1
+					if not keysound_in_group and keysound_group == keysound_next_group:
+						keysound_in_group = True
+						keysound_new_group = True
+					elif keysound_in_group and keysound_group != keysound_next_group:
+						keysound_in_group = False
+						keysound_end_group = True
+				else:
+					# a keysound not matching the prefix pattern shouldn't ever be in a group
+					if keysound_in_group:
+						print("ERROR: Keysound {} should not have been in a group".format(keysound_name))
+						usage()
+				
 				rpp_out.write("<TRACK\n")
 				rpp_out.write('NAME "{}"\n'.format(keysound_name))
 				if parsing_mode == MODE_BMS:
-					rpp_out.write("VOLPAN {} 0 -1 -1 1\n".format(1/3.0)) # 1/3 track volume
+					rpp_out.write("VOLPAN 1 0 -1 -1 1\n")
 				elif parsing_mode == MODE_DTX:
-					if i in keysoundvol_dict:
-						vol = keysoundvol_dict[i]
+					if keysound_index in keysoundvol_dict:
+						vol = keysoundvol_dict[keysound_index]
 					else:
 						vol = 1.0
-					if i in keysoundpan_dict:
-						pan = keysoundpan_dict[i]
+					if keysound_index in keysoundpan_dict:
+						pan = keysoundpan_dict[keysound_index]
 					else:
 						pan = 0.0
-					rpp_out.write("VOLPAN {} {} -1 -1 1\n".format(vol / 2.0, pan)) # 1/2 track volume
+					rpp_out.write("VOLPAN {} {} -1 -1 1\n".format(vol, pan))
+				if keysound_new_group:
+					rpp_out.write("ISBUS 1 1\n")
+				elif keysound_end_group:
+					rpp_out.write("ISBUS 2 -1\n")
+				else:
+					rpp_out.write("ISBUS 0 0\n")
 				# sort samples by position
-				sample_array = sample_dict[i]
+				sample_array = sample_dict[keysound_index]
 				sample_array.sort(key=sample_pos_sort_key)
 				for s in range(len(sample_array)):
 					sample = sample_array[s]
@@ -642,7 +693,7 @@ def parse_keysounds(chart_file, out_file):
 					rpp_out.write("<ITEM\n")
 					rpp_out.write("POSITION {}\n".format(sample["pos"]))
 					rpp_out.write("LENGTH {}\n".format(sample["length"]))
-					rpp_out.write("NAME {}\n".format(keysound_dict[i]))
+					rpp_out.write("NAME {}\n".format(keysound_dict[keysound_index]))
 					# TODO per-sample volume
 					# if "volume" in sample:
 						# rpp_out.write("VOLPAN {} 0 1 -1\n".format(sample["volume"]))
@@ -655,7 +706,7 @@ def parse_keysounds(chart_file, out_file):
 					else:
 						# unknown audio type
 						rpp_out.write("<SOURCE\n")
-					rpp_out.write('FILE "{}"\n'.format(keysound_dict[i]))
+					rpp_out.write('FILE "{}"\n'.format(keysound_dict[keysound_index]))
 					rpp_out.write(">\n")
 					rpp_out.write(">\n")
 				rpp_out.write(">\n")
