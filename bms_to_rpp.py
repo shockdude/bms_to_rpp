@@ -693,6 +693,7 @@ def parse_keysounds(chart_file, out_file):
 					rpp_out.write("<ITEM\n")
 					rpp_out.write("POSITION {}\n".format(sample["pos"]))
 					rpp_out.write("LENGTH {}\n".format(sample["length"]))
+					rpp_out.write("LOOP 0\n")
 					rpp_out.write("NAME {}\n".format(keysound_dict[keysound_index]))
 					# TODO per-sample volume
 					# if "volume" in sample:
