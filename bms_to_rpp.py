@@ -643,7 +643,7 @@ def parse_keysounds(chart_file, out_file):
 							keysound_next_group_match = keysound_group_re.match(keysound_next_name)
 							if keysound_next_group_match != None:
 								keysound_next_group = keysound_next_group_match.group(1)
-								j = len(keysound_indices)
+							j = len(keysound_indices)
 						else:
 							j += 1
 					if not keysound_in_group and keysound_group == keysound_next_group:
