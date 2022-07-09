@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-VERSION = "v1.00"
+VERSION = "v1.00a"
 
 import sys
 import os
@@ -267,7 +267,7 @@ def add_channel(line):
 			playable_channels = DTX_PLAYABLE_CHANNELS
 
 		# check for channel with data array
-		if channel in (playable_channels + (BPM_CHANNEL, EXTBPM_CHANNEL, STOP_CHANNEL)) and data != "00":
+		if channel in (playable_channels + (BPM_CHANNEL, EXTBPM_CHANNEL, STOP_CHANNEL)):
 			data_array = data_to_array(data)
 			if channel == "01":
 				# bgm tracks are special and shouldn't be merged
