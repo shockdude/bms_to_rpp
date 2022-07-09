@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-VERSION = "v1.00a"
+VERSION = "v1.00b"
 
 import sys
 import os
@@ -267,7 +267,7 @@ def add_channel(line):
 			playable_channels = DTX_PLAYABLE_CHANNELS
 
 		# check for channel with data array
-		if channel in (playable_channels + (BPM_CHANNEL, EXTBPM_CHANNEL, STOP_CHANNEL)):
+		if channel in (playable_channels + (BPM_CHANNEL, EXTBPM_CHANNEL, STOP_CHANNEL)) and data != "00":
 			data_array = data_to_array(data)
 			if channel == "01":
 				# bgm tracks are special and shouldn't be merged
@@ -529,11 +529,9 @@ def parse_keysounds(chart_file, out_file):
 			header = "{:03d}{}".format(measure_num, channel)
 			if header in notes_dict:
 				if channel == "01":
-					bg_channel = 1
 					# multiple bgm keysound arrays
 					for keysounds in notes_dict[header]:
-						add_keysounds_to_sample_dict("BG" + str(bg_channel), keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
-						bg_channel += 1
+						add_keysounds_to_sample_dict(channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
 				else:
 					keysounds = notes_dict[header]
 					add_keysounds_to_sample_dict(channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
@@ -555,7 +553,7 @@ def parse_keysounds(chart_file, out_file):
 		guitar_samples = []
 		bass_samples = []
 		for channel in channelsample_dict:
-			if channel in DTX_BG_CHANNELS or channel[0:2] == "BG":
+			if channel in DTX_BG_CHANNELS:
 				# trim overlapping samples within each background channel
 				sample_array = channelsample_dict[channel]
 				sample_array.sort(key=sample_pos_sort_key)
@@ -582,23 +580,19 @@ def parse_keysounds(chart_file, out_file):
 			next_sample = bass_samples[s+1]
 			if sample["pos"] + sample["length"] > next_sample["pos"]:
 				sample["length"] = next_sample["pos"] - sample["pos"]
-	# BMS-specific overlapping sample handling, including long note handling
+	# BMS-specific long note handling
 	elif parsing_mode == MODE_BMS:
 		for channel in channelsample_dict:
-			# trim overlapping samples within each channel
-			# TODO how does this work for multiple background channels?
-			# Assuming each bg channel overlaps itself in the order of its appearance
 			sample_array = channelsample_dict[channel]
 			sample_array.sort(key=sample_pos_sort_key)
 			for s in range(len(sample_array)):
 				sample = sample_array[s]
-				if s < len(sample_array) - 1:
-					next_sample = sample_array[s+1]
-					if sample["pos"] + sample["length"] > next_sample["pos"]:
-						sample["length"] = next_sample["pos"] - sample["pos"]
 				if channel in LONG_NOTE_CHANNELS:
 					if channel not in active_long_notes:
 						active_long_notes[channel] = sample["index"]
+						next_sample = sample_array[s+1]
+						if sample["pos"] + sample["length"] > next_sample["pos"]:
+							sample["length"] = next_sample["pos"] - sample["pos"]
 					else:
 						# terminate long note
 						if sample["index"] == active_long_notes[channel]:
