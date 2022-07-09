@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-VERSION = "v0.93"
+VERSION = "v1.00"
 
 import sys
 import os
@@ -48,6 +48,8 @@ BMS_PLAYABLE_CHANNELS = ("01",
 						"11", "12", "13", "14", "15", "16", "17", "18", "19",
 						"21", "22", "23", "24", "25", "26", "27", "28", "29",
 						"51", "52", "53", "54", "55", "56", "57", "58", "59",
+						"61", "62", "63", "64", "65", "66", "67", "68", "69")
+LONG_NOTE_CHANNELS = ("51", "52", "53", "54", "55", "56", "57", "58", "59",
 						"61", "62", "63", "64", "65", "66", "67", "68", "69")
 DTX_DRUM_CHANNELS = ("11", "12", "13", "14", "15", "16", "17", "18", "19", "1A")
 DTX_GUITAR_CHANNELS = ("20", "21", "22", "23", "24", "25", "26", "27")
@@ -120,6 +122,9 @@ channelsample_dict = {}
 
 # keep track of the largest measure in the BMS
 max_measure = 0
+
+# keep track of active long notes (channel --> keysound index, active if channel exists in dict)
+active_long_notes = {}
 
 # get simple header tag value
 def get_tag_value(line, tag):
@@ -338,9 +343,10 @@ def add_keysounds_to_sample_dict(channel, keysounds, keysound_lengths, current_t
 			sample = {}
 			sample["length"] = keysound_lengths[keysound]
 			sample["pos"] = current_timepos + measure_offset_seconds(measure_num, measure_num + k/keysounds_len, bpm_positions[current_bpmpos_i:], stop_positions, measure_len)
+			sample["index"] = keysound
 			# unused but good for debugging
-			# sample["index"] = keysound
 			# sample["channel"] = channel
+			# sample["measure_num"] = measure_num
 			# TODO per-sample volume
 			#sample["volume"] = 1.0
 			sample_dict[keysound].append(sample)
@@ -523,9 +529,11 @@ def parse_keysounds(chart_file, out_file):
 			header = "{:03d}{}".format(measure_num, channel)
 			if header in notes_dict:
 				if channel == "01":
+					bg_channel = 1
 					# multiple bgm keysound arrays
 					for keysounds in notes_dict[header]:
-						add_keysounds_to_sample_dict(channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
+						add_keysounds_to_sample_dict("BG" + str(bg_channel), keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
+						bg_channel += 1
 				else:
 					keysounds = notes_dict[header]
 					add_keysounds_to_sample_dict(channel, keysounds, keysound_lengths, current_timepos, current_bpmpos_i, stop_positions, measure_num, measure_len)
@@ -547,7 +555,7 @@ def parse_keysounds(chart_file, out_file):
 		guitar_samples = []
 		bass_samples = []
 		for channel in channelsample_dict:
-			if channel in DTX_BG_CHANNELS:
+			if channel in DTX_BG_CHANNELS or channel[0:2] == "BG":
 				# trim overlapping samples within each background channel
 				sample_array = channelsample_dict[channel]
 				sample_array.sort(key=sample_pos_sort_key)
@@ -574,6 +582,31 @@ def parse_keysounds(chart_file, out_file):
 			next_sample = bass_samples[s+1]
 			if sample["pos"] + sample["length"] > next_sample["pos"]:
 				sample["length"] = next_sample["pos"] - sample["pos"]
+	# BMS-specific overlapping sample handling, including long note handling
+	elif parsing_mode == MODE_BMS:
+		for channel in channelsample_dict:
+			# trim overlapping samples within each channel
+			# TODO how does this work for multiple background channels?
+			# Assuming each bg channel overlaps itself in the order of its appearance
+			sample_array = channelsample_dict[channel]
+			sample_array.sort(key=sample_pos_sort_key)
+			for s in range(len(sample_array)):
+				sample = sample_array[s]
+				if s < len(sample_array) - 1:
+					next_sample = sample_array[s+1]
+					if sample["pos"] + sample["length"] > next_sample["pos"]:
+						sample["length"] = next_sample["pos"] - sample["pos"]
+				if channel in LONG_NOTE_CHANNELS:
+					if channel not in active_long_notes:
+						active_long_notes[channel] = sample["index"]
+					else:
+						# terminate long note
+						if sample["index"] == active_long_notes[channel]:
+							sample["length"] = 0
+						del active_long_notes[channel]
+		if len(active_long_notes) != 0:
+			print("WARNING: unterminated long notes")
+			print(active_long_notes)
 	
 	# write rpp
 	print("Writing {}...".format(out_file))
@@ -689,27 +722,28 @@ def parse_keysounds(chart_file, out_file):
 							next_sample = sample_array[s+1]
 							if sample["pos"] + sample["length"] > next_sample["pos"]:
 								sample["length"] = next_sample["pos"] - sample["pos"]
-					# add a keysound sample to the track
-					rpp_out.write("<ITEM\n")
-					rpp_out.write("POSITION {}\n".format(sample["pos"]))
-					rpp_out.write("LENGTH {}\n".format(sample["length"]))
-					rpp_out.write("LOOP 0\n")
-					rpp_out.write("NAME {}\n".format(keysound_dict[keysound_index]))
-					# TODO per-sample volume
-					# if "volume" in sample:
-						# rpp_out.write("VOLPAN {} 0 1 -1\n".format(sample["volume"]))
-					if keysound_ext.lower() == WAV_EXT:
-						rpp_out.write("<SOURCE WAVE\n")
-					elif keysound_ext.lower() == OGG_EXT:
-						rpp_out.write("<SOURCE VORBIS\n")
-					elif keysound_ext.lower() == MP3_EXT:
-						rpp_out.write("<SOURCE MP3\n")
-					else:
-						# unknown audio type
-						rpp_out.write("<SOURCE\n")
-					rpp_out.write('FILE "{}"\n'.format(keysound_dict[keysound_index]))
-					rpp_out.write(">\n")
-					rpp_out.write(">\n")
+					if sample["length"] > 0:
+						# add a keysound sample to the track
+						rpp_out.write("<ITEM\n")
+						rpp_out.write("POSITION {}\n".format(sample["pos"]))
+						rpp_out.write("LENGTH {}\n".format(sample["length"]))
+						rpp_out.write("LOOP 0\n")
+						rpp_out.write("NAME {}\n".format(keysound_dict[keysound_index]))
+						# TODO per-sample volume
+						# if "volume" in sample:
+							# rpp_out.write("VOLPAN {} 0 1 -1\n".format(sample["volume"]))
+						if keysound_ext.lower() == WAV_EXT:
+							rpp_out.write("<SOURCE WAVE\n")
+						elif keysound_ext.lower() == OGG_EXT:
+							rpp_out.write("<SOURCE VORBIS\n")
+						elif keysound_ext.lower() == MP3_EXT:
+							rpp_out.write("<SOURCE MP3\n")
+						else:
+							# unknown audio type
+							rpp_out.write("<SOURCE\n")
+						rpp_out.write('FILE "{}"\n'.format(keysound_dict[keysound_index]))
+						rpp_out.write(">\n")
+						rpp_out.write(">\n")
 				rpp_out.write(">\n")
 		rpp_out.write(">\n")
 		
