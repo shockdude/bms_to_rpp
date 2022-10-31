@@ -128,10 +128,10 @@ active_long_notes = {}
 
 # get simple header tag value
 def get_tag_value(line, tag):
-	tag_re = re.compile("#{}\\s+(.+)\\s*".format(tag))
+	tag_re = re.compile("#{}(:\\s*|\\s+)(.+)\\s*".format(tag))
 	re_match = tag_re.match(line)
 	if re_match != None and re_match.start() == 0:
-		value = re_match.group(1)
+		value = re_match.group(2)
 		return value
 	return None
 
@@ -420,6 +420,10 @@ def parse_keysounds(chart_file, out_file):
 					if add_stopvalue(line):
 						continue
 				add_channel(line)
+				
+	if len(bpm_dict) == 0:
+		print("ERROR: no #BPM detected")
+		usage()
 
 	# increase maximum measure by 1, in case there are notes in the last measure
 	max_measure += 1
