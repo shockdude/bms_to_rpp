@@ -128,7 +128,7 @@ active_long_notes = {}
 
 # get simple header tag value
 def get_tag_value(line, tag):
-	tag_re = re.compile("#{}(:\\s*|\\s+)(.+)\\s*".format(tag))
+	tag_re = re.compile("#{}(:\\s*|\\s+)([^;]+)\\s*;?".format(tag))
 	re_match = tag_re.match(line)
 	if re_match != None and re_match.start() == 0:
 		value = re_match.group(2)
@@ -137,7 +137,7 @@ def get_tag_value(line, tag):
 
 # parse header with channel and get value
 def get_header_value(line, header):
-	header_re = re.compile("#{}([\\w\\d][\\w\\d])(:\\s*|\\s+)(.+)\\s*".format(header))
+	header_re = re.compile("#{}([\\w\\d][\\w\\d])(:\\s*|\\s+)([^;]+)\\s*;?".format(header))
 	re_match = header_re.match(line)
 	if re_match != None and re_match.start() == 0:
 		index = re_match.group(1)
