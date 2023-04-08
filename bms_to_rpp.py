@@ -621,6 +621,7 @@ def parse_keysounds(chart_file, out_file):
 			rpp_out.write("MASTER_VOLUME {} 0 -1 -1 1\n".format(master_volume / 200.0))
 		rpp_out.write("VIDEO_CONFIG 0 0 256\n")
 		rpp_out.write("PANMODE 3\n")
+		rpp_out.write("VZOOMEX 0 0\n")
 		# create tempomap - bpms & time signatures
 		if len(bpm_positions) or len(measurelentime_dict) > 1:
 			rpp_out.write("<TEMPOENVEX\n")
